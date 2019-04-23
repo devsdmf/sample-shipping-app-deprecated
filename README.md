@@ -51,3 +51,6 @@ This [route](https://github.com/TiendaNube/sample-shipping-app/blob/master/app/m
 
 This [route](https://github.com/TiendaNube/sample-shipping-app/blob/master/app/main.py#L77) is mainly responsible to return shipping rates to a TiendaNube store during the purchase process (product page, cart, checkout, etc). This route get from the JSON body the information about the cart, like the store's ID, the products in the cart, the origin and destination addresses, and so on. With this information, the application will consume the Correios web-service to retrieve the available shipping rates. Right after obtain the shipping rates, it will convert the correios rates format to the Shipping Option format expected by the TiendaNube API. 
 
+## License
+
+This project is a sample project and is licensed under the [MIT license](LICENSE).
