@@ -1,0 +1,7 @@
+Flask==1.0.2
+python-dotenv==0.10.1
+requests==2.21.0
+mysql-connector==2.2.9
+correios-python-sdk==1.0.1
+pytz==2019.1
+gunicorn==19.9.0
