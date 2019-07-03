@@ -23,16 +23,19 @@ def item_to_package_item(package, item):
     return package
 
 # convert a correios result service to the shipping option format
-def service_to_shipping_option(service):
-    name = 'CorreiosApp - {}'.format(service_code_to_label.get(service.code, 'Unknown Option'))
-    code = service_code_to_code.get(service.code,'unknown')
+def rate_to_shipping_option(rates, free_shipping_cart = False):
+    merchant_rate, consumer_rate = rates
+    print('PRICE MERCHANT => {}'.format(merchant_rate.price))
+    print('PRICE CONSUMER => {}'.format(consumer_rate.price))
+    name = 'CorreiosApp - {}'.format(service_code_to_label.get(merchant_rate.code, 'Unknown Option'))
+    code = service_code_to_code.get(merchant_rate.code,'unknown')
     tz = timezone(config.OPTION_TIMEZONE)
-    eta = datetime.now(tz) + timedelta(service.days)
+    eta = datetime.now(tz) + timedelta(merchant_rate.days)
     return {
         'name': name,
         'code': code,
-        'price': float(service.price),
-        'price_merchant': float(service.price),
+        'price': float(consumer_rate.price) if not free_shipping_cart else 0.0,
+        'price_merchant': float(merchant_rate.price),
         'type': config.OPTION_TYPE,
         'currency': config.OPTION_CURRENCY,
         'min_delivery_date': eta.isoformat(timespec='seconds'),

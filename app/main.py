@@ -10,7 +10,7 @@ from app import config
 from app.models.store_token import StoreToken, StoreTokenRepository, StoreTokenException
 from app.services.tiendanube import TiendaNube, TiendaNubeException
 from app.services.logger import Logger
-from app.util.correios import item_to_package_item, service_to_shipping_option
+from app.util.correios import item_to_package_item, rate_to_shipping_option
 
 # initializing app instance
 app = Flask(config.APP_NAME)
@@ -48,11 +48,13 @@ def install():
     try:
         # authenticating against tiendanube api
         access_token, store_id = tn.authorize_with_code(request.args.get('code'))
+        logger.info('Successfully authenticated against Tiendanube API, the store ID is {} and the access token is {}'.format(store_id,access_token))
 
         # saving store access token to database
         st = StoreToken(store_id,access_token)
         repo = StoreTokenRepository(conn)
         repo.save_token(st)
+        logger.info('Successfully persisted store_id and access token to the database')
 
         # setting up tn instance
         tn.set_access_token(st.access_token)
@@ -64,6 +66,7 @@ def install():
         # creating shipping carrier options
         pac_option = tn.create_shipping_carrier_option(carrier.get('id'), code=config.OPTION_PAC_CODE, name=config.OPTION_PAC_NAME)
         sedex_option = tn.create_shipping_carrier_option(carrier.get('id'), code=config.OPTION_SEDEX_CODE, name=config.OPTION_SEDEX_NAME)
+
         store = tn.get_store()
         return redirect('https://' + store.get('original_domain') + '/admin/shipping')
     except StoreTokenException as e:
@@ -77,35 +80,69 @@ def install():
 @app.route('/nuvemshop/options', methods=["POST"])
 def options():
     # getting current request body
+    logger.info("Options got requested with the following body")
+    logger.info(request.get_data(as_text=True))
     req = request.get_json()
-
-    # creating a correios package
-    package = reduce(item_to_package_item,req.get('items'),BoxPackage())
 
     # initializing correios client
     correios = Correios()
+    available_services = [config.OPTION_PAC_SERVICE, config.OPTION_SEDEX_SERVICE]
 
-    # getting correios rates
-    result = correios.get_shipping_rates(
-        origin = req.get('origin').get('postal_code'),
-        destination = req.get('destination').get('postal_code'),
-        package = package,
-        services = [config.OPTION_PAC_SERVICE, config.OPTION_SEDEX_SERVICE]
-    )
+    # getting cart specs for shipping costs calculation
+    origin = req.get('origin').get('postal_code')
+    destination = req.get('destination').get('postal_code')
+    items = req.get('items')
 
-    # checking if there is any error
-    if not result.has_errors():
-        # parsing correios service rate to the shipping option format
-        rates = list(map(lambda s: service_to_shipping_option(s), result.services))
+    # getting base shipping costs
+    # creating a correios package
+    package = reduce(item_to_package_item,items,BoxPackage())
+    logger.info('CORREIOS PACKAGE')
+    logger.info(package.api_format())
 
-        return json.jsonify({'rates': rates})
-    else:
-        for service in result.services:
+    # requesting rates from webservice
+    rates = correios.get_shipping_rates(origin=origin, destination=destination, package=package, services=available_services)
+
+    # checking for errors
+    if rates.has_errors():
+        # logging errors and returning result early
+        for service in rates.services:
             code = service.code
             error = service.error_code
             message = service.error_message
-            logger.warn('The service {} returned the error {} with message: '.format(code,error,message))
+            logger.warn('The service {} returned the error {} with message: {}'.format(code,error,message))
         return abort(400)
+
+    # checking for free shipping items in cart
+    free_shipping_items_qty = reduce(lambda c, i: c + 1 if i.get('free_shipping') else 0, items, 0)
+    free_shipping_cart = free_shipping_items_qty == len(items)
+
+    if free_shipping_items_qty > 0 and not free_shipping_cart:
+        # performing another shipping costs calculation in order to get the consumer prices
+        non_free_shipping_items = [item for item in items if item.get('free_shipping') is not True]
+        non_free_shipping_package = reduce(item_to_package_item,non_free_shipping_items,BoxPackage())
+
+        # requesting rates from webservice
+        non_free_shipping_rates = correios.get_shipping_rates(
+            origin=origin,
+            destination=destination,
+            package=non_free_shipping_package,
+            services=available_services
+        )
+
+        if non_free_shipping_rates.has_errors():
+            for service in non_free_shipping_rates.services:
+                code = service.code
+                error = service.error_code
+                message = service.error_message
+                logger.warn('The service {} returned the error {} with message: {}'.format(code,error,message))
+            non_free_shipping_rates = rates
+    else:
+        non_free_shipping_rates = rates
+
+    # parsing service rates to the shipping option format
+    options = list(map(lambda s: rate_to_shipping_option(s, free_shipping_cart), zip(rates.services,non_free_shipping_rates.services)))
+
+    return json.jsonify({'rates': options})
 
 if __name__ == '__main__':
     app.run()
