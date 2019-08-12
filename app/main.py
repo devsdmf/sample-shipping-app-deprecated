@@ -12,6 +12,9 @@ from app.services.tiendanube import TiendaNube, TiendaNubeException
 from app.services.logger import Logger
 from app.util.correios import item_to_package_item, service_to_shipping_option
 
+from datetime import datetime, timedelta
+from pytz import timezone
+
 # initializing app instance
 app = Flask(config.APP_NAME)
 
@@ -76,36 +79,72 @@ def install():
 # shipping options route -> this route will be called during a purchase process (product page, cart, checkout, etc...)
 @app.route('/nuvemshop/options', methods=["POST"])
 def options():
-    # getting current request body
-    req = request.get_json()
+    # helper function to generate a pickup option 
+    def create_pickup_option_for(name, code, price, price_merchant, min_eta, max_eta):
+        return {
+            'name': 'Pickup Point - {}'.format(name),
+            'code': code,
+            'price': float(price),
+            'price_merchant': float(price_merchant),
+            'type': 'pickup',
+            'currency': config.OPTION_CURRENCY,
+            'min_delivery_date': min_eta.isoformat(timespec='seconds'),
+            'max_delivery_date': max_eta.isoformat(timespec='seconds'),
+            'phone_required': False,
+            'id_required': False,
+            'accepts_cod': True,
+            'address': {
+                'address': 'Sample Street',
+                'number': 123,
+                'floor': None,
+                'locality': 'Sample District',
+                'city': 'Sample City',
+                'province': 'São Paulo',
+                'country': 'BR',
+                'zipcode': '04547130',
+                'latitude': None,
+                'longitude': None,
+            },
+            'hours': [
+                {
+                    'day': 1,
+                    'start': '0900',
+                    'end': '1800'
+                },{
+                    'day': 2,
+                    'start': '0900',
+                    'end': '1800'
+                },{
+                    'day': 3,
+                    'start': '0900',
+                    'end': '1800'
+                },{
+                    'day': 4,
+                    'start': '0900',
+                    'end': '1800'
+                },{
+                    'day': 5,
+                    'start': '0900',
+                    'end': '1800'
+                }
+            ],
+            'availability': True,
+            'reference': code
+        }
 
-    # creating a correios package
-    package = reduce(item_to_package_item,req.get('items'),BoxPackage())
+    # generating mock pickup points
+    tz = timezone(config.OPTION_TIMEZONE)
+    now = datetime.now(tz)
+    min_eta = now + timedelta(2)
+    max_eta = now + timedelta(4)
 
-    # initializing correios client
-    correios = Correios()
+    options = []
+    options.append(create_pickup_option_for('#1',1,100.00,100.00,min_eta,max_eta))
+    options.append(create_pickup_option_for('#2',1,100.00,100.00,min_eta,max_eta))
+    options.append(create_pickup_option_for('#3',1,100.00,100.00,now + timedelta(5), now + timedelta(7)))
+    options.append(create_pickup_option_for('#4',2,150.00,150.00,min_eta,max_eta))
 
-    # getting correios rates
-    result = correios.get_shipping_rates(
-        origin = req.get('origin').get('postal_code'),
-        destination = req.get('destination').get('postal_code'),
-        package = package,
-        services = [config.OPTION_PAC_SERVICE, config.OPTION_SEDEX_SERVICE]
-    )
-
-    # checking if there is any error
-    if not result.has_errors():
-        # parsing correios service rate to the shipping option format
-        rates = list(map(lambda s: service_to_shipping_option(s), result.services))
-
-        return json.jsonify({'rates': rates})
-    else:
-        for service in result.services:
-            code = service.code
-            error = service.error_code
-            message = service.error_message
-            logger.warn('The service {} returned the error {} with message: '.format(code,error,message))
-        return abort(400)
+    return json.jsonify({'rates': options})
 
 if __name__ == '__main__':
     app.run()
